@@ -1,0 +1,74 @@
+# Node modules (if you add any build tools later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Chrome Extension Development
+*.pem
+*.crx
+*.zip
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Build outputs (if you add build tools)
+dist/
+build/
+.cache/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# OS generated files
+.Spotlight-V100
+.Trashes

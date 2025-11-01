@@ -1,0 +1,72 @@
+/* Styles for the floating "Need Help?" button */
+
+.study-buddy-floating-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 999999;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 50px;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  user-select: none;
+}
+
+.study-buddy-floating-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+}
+
+.study-buddy-floating-btn:active {
+  transform: translateY(0);
+}
+
+.study-buddy-floating-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Animation on page load */
+@keyframes slideIn {
+  from {
+    transform: translateX(150%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes slideInWidget {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.study-buddy-floating-btn {
+  animation: slideIn 0.5s ease-out;
+}
