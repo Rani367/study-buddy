@@ -3,6 +3,8 @@ const API_URL = 'http://localhost:3000/api/chat'; // Change for production
 
 // State
 let currentPageData = null;
+let currentSessionId = null;
+let conversationSummary = null;
 
 // DOM Elements
 const chatContainer = document.getElementById('chat-container');
@@ -49,6 +51,10 @@ async function init() {
 
       if (response) {
         currentPageData = response;
+
+        // Initialize session for this page
+        initializeSession();
+
         displayPageInfo(response);
         displayDetectedQuestions(response.questions);
 
@@ -160,6 +166,171 @@ function showStatus(message, isError = false) {
   }, 3000);
 }
 
+// Initialize or resume session for current page
+async function initializeSession() {
+  if (!currentPageData) return;
+
+  // Create session ID based on page (URL + title for uniqueness)
+  const pageKey = `${currentPageData.url || 'unknown'}_${currentPageData.title || 'untitled'}`;
+  currentSessionId = btoa(pageKey).substring(0, 32); // Base64 encode and limit length
+
+  // Try to load existing session data
+  try {
+    const result = await chrome.storage.local.get(['sessions']);
+    const sessions = result.sessions || {};
+
+    if (sessions[currentSessionId]) {
+      // Resume existing session
+      conversationSummary = sessions[currentSessionId].summary || null;
+      console.log('Resumed session:', currentSessionId);
+    } else {
+      // New session
+      conversationSummary = null;
+      console.log('Started new session:', currentSessionId);
+    }
+  } catch (error) {
+    console.error('Error initializing session:', error);
+  }
+}
+
+// Get recent conversation history for current session
+async function getConversationHistory() {
+  try {
+    const result = await chrome.storage.local.get(['chatHistory']);
+    const history = result.chatHistory || [];
+
+    if (!currentPageData) return [];
+
+    // Filter messages from current page and add session tracking
+    const pageHistory = history.filter(item =>
+      item.page === currentPageData.title
+    );
+
+    // Return last 8 messages for context (adjust as needed)
+    return pageHistory.slice(-8);
+  } catch (error) {
+    console.error('Error getting conversation history:', error);
+    return [];
+  }
+}
+
+// Check if conversation needs summarization
+async function checkAndSummarize() {
+  try {
+    const history = await getConversationHistory();
+
+    // Trigger summarization if:
+    // 1. More than 15 messages in current session
+    // 2. OR total character count > 5000
+    const messageCount = history.length;
+    const totalChars = history.reduce((sum, item) =>
+      sum + (item.user?.length || 0) + (item.ai?.length || 0), 0
+    );
+
+    if (messageCount > 15 || totalChars > 5000) {
+      await summarizeConversation(history);
+    }
+  } catch (error) {
+    console.error('Error checking for summarization:', error);
+  }
+}
+
+// Summarize conversation using AI
+async function summarizeConversation(history) {
+  try {
+    // Build conversation text for summarization
+    const conversationText = history.map(item =>
+      `User: ${item.user}\nAssistant: ${item.ai}`
+    ).join('\n\n');
+
+    const summaryPrompt = `Please provide a concise summary of this conversation. Focus on key topics discussed, important questions asked, and main points covered. Keep it brief (2-3 sentences):\n\n${conversationText}`;
+
+    // Call API to get summary
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: summaryPrompt })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      conversationSummary = data.response;
+
+      // Save summary to storage
+      const result = await chrome.storage.local.get(['sessions']);
+      const sessions = result.sessions || {};
+
+      sessions[currentSessionId] = {
+        summary: conversationSummary,
+        lastUpdated: new Date().toISOString(),
+        messageCount: history.length
+      };
+
+      await chrome.storage.local.set({ sessions });
+      console.log('Conversation summarized');
+    }
+  } catch (error) {
+    console.error('Error summarizing conversation:', error);
+  }
+}
+
+// Build conversation context for AI
+async function buildConversationContext(currentMessage) {
+  const history = await getConversationHistory();
+
+  if (history.length === 0 && !conversationSummary) {
+    return ''; // No context to add
+  }
+
+  let context = '';
+
+  // Add summary if it exists
+  if (conversationSummary) {
+    context += `Previous conversation summary: ${conversationSummary}\n\n`;
+  }
+
+  // Add recent messages (last 5-8 depending on summary existence)
+  const recentCount = conversationSummary ? 5 : 8;
+  const recentMessages = history.slice(-recentCount);
+
+  if (recentMessages.length > 0) {
+    context += 'Recent conversation:\n';
+
+    // Filter out repetitive quiz/explain/summarize commands from history
+    // to prevent the AI from getting stuck in loops
+    const filteredMessages = recentMessages.filter(item => {
+      const userMsg = item.user.toLowerCase();
+
+      // If current message is a follow-up (shorter, not a command), include all context
+      const isFollowUp = currentMessage && currentMessage.length < 50 &&
+                         !userMsg.includes('quiz') &&
+                         !userMsg.includes('explain') &&
+                         !userMsg.includes('summarize');
+
+      if (isFollowUp) {
+        return true; // Include all recent messages for follow-ups
+      }
+
+      // Otherwise, filter out command-like messages if we have enough context
+      const isCommand = userMsg.includes('quiz me') ||
+                       userMsg.includes('explain what this page') ||
+                       userMsg.includes('summarize the key points');
+
+      return !isCommand || recentMessages.length <= 2;
+    });
+
+    const messagesToShow = filteredMessages.length > 0 ? filteredMessages : recentMessages.slice(-3);
+
+    messagesToShow.forEach(item => {
+      context += `User: ${item.user}\nAssistant: ${item.ai}\n\n`;
+    });
+  }
+
+  return context;
+}
+
 // Get content to send to AI - send all main article content
 function getContentForAI(fullContent) {
   // Send as much cleaned content as possible
@@ -200,27 +371,51 @@ async function sendMessage() {
   messageInput.value = '';
 
   try {
+    // Check if we need to summarize conversation before continuing
+    await checkAndSummarize();
+
     // Build context-aware prompt with system instructions
-    let systemPrompt = `You are a helpful study assistant. Be concise and direct. Answer questions straight to the point without unnecessary introductions or explanations about how you'll help. For quizzes, just provide the question. For explanations, get straight to the answer. Keep responses brief and focused.`;
+    let systemPrompt = `You are a helpful study assistant. Be concise and direct. Answer questions straight to the point without unnecessary introductions or explanations about how you'll help. For quizzes, just provide the question. For explanations, get straight to the answer. Keep responses brief and focused.
 
-    let contextualPrompt = message;
+You can use both the webpage content provided AND your general knowledge to answer questions. Prioritize information from the webpage when it's relevant to the question, but don't hesitate to use your knowledge for general questions, follow-ups, or when the page doesn't contain the answer.
 
+IMPORTANT: Pay attention to the user's CURRENT question. If they ask you to stop, explain something, or change topics, do so immediately - don't keep repeating previous tasks like quizzing.`;
+
+    // Build conversation context (pass current message to help filter appropriately)
+    const conversationContext = await buildConversationContext(message);
+
+    let contextualPrompt = '';
+
+    // Detect if user wants to break out of a loop/mode
+    const breakoutPhrases = ['stop', 'enough', 'no more', 'change topic', 'different question', 'tell me', 'explain'];
+    const isBreakout = breakoutPhrases.some(phrase => message.toLowerCase().includes(phrase));
+
+    // Add conversation history if it exists (but not if user is trying to break out)
+    if (conversationContext && !isBreakout) {
+      contextualPrompt += conversationContext + '\n';
+    } else if (isBreakout) {
+      // If breaking out, only add a minimal note about the context switch
+      contextualPrompt += 'Note: User is changing topics or asking for something different.\n\n';
+    }
+
+    // Add current page context
     if (currentPageData) {
-      contextualPrompt = `I'm looking at a webpage titled "${currentPageData.title}". `;
+      contextualPrompt += `Currently viewing webpage: "${currentPageData.title}"\n`;
 
       if (currentPageData.selectedText) {
-        contextualPrompt += `I've selected this text: "${currentPageData.selectedText}". `;
+        contextualPrompt += `Selected text: "${currentPageData.selectedText}"\n`;
       }
 
       // Get main content from the page (already cleaned by content script)
       const relevantContent = getContentForAI(currentPageData.content);
 
-      contextualPrompt += `Here's the main content from the page:\n${relevantContent}\n\n`;
-      contextualPrompt += `My question: ${message}`;
-      contextualPrompt += `\n\nIMPORTANT: Answer based ONLY on the page content provided above. If the information is in the content, cite it exactly. If not in the content, say so.`;
+      contextualPrompt += `\nPage content:\n${relevantContent}\n\n`;
     }
 
-    // Combine system prompt with user message
+    // Add current user question
+    contextualPrompt += `Current question: ${message}`;
+
+    // Combine system prompt with contextual information
     const fullPrompt = `${systemPrompt}\n\n${contextualPrompt}`;
 
     const response = await fetch(API_URL, {
